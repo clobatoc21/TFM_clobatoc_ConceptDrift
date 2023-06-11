@@ -167,9 +167,6 @@ class UncertaintyX2Experiment(BaselineExperiment):
                 - If different, retrain and update both windows
                 - If from same distribution, update detection window and repeat
         """
-
-        self.train_model_gscv(window="reference", gscv=True)
-
         # ------------------------Create csv for storing results----------------#
         if self.delete_csv==True:
             cols = ["Exp_name", "Window_size", "Sign_thres", "Margin_width", "Detection_end", "Det_acc", "Ref_dist", 
@@ -180,11 +177,15 @@ class UncertaintyX2Experiment(BaselineExperiment):
             entries_df.to_csv(f"./results/{self.dataset.name}_{self.name}_results.csv", index=False)
         # ---------------------------------------------------------------------#
 
+        # train
+        self.train_model_gscv(window="reference", gscv=True)
+
         # initialize score
         self.experiment_metrics["scores"].append(self.evaluate_model_aggregate())
         self.update_detection_window()
 
         CALC_REF_RESPONSE = True
+        entries_without_drift =  self.dataset.window_size # Assigning length of window to start
 
         while self.detection_window_end <= len(self.dataset.full_df):
 
@@ -231,9 +232,18 @@ class UncertaintyX2Experiment(BaselineExperiment):
         
             self.p_vals.append(x2_result.pvalue)
 
-            significant_change = (
-                True if x2_result[1] < self.significance_thresh else False
-            )
+            if entries_without_drift > round(self.dataset.window_size/2,0):
+                if x2_result[1] < self.significance_thresh:
+                    significant_change = True
+                    entries_without_drift = 0
+                    self.drift_entries.append(self.detection_window_end)
+                else:
+                    significant_change = False
+                    entries_without_drift +=1
+            else:
+                significant_change = False
+                entries_without_drift +=1
+
             self.drift_signals.append(significant_change)
 
             # compare accuracies to see if detection was false alarm
@@ -282,9 +292,7 @@ class UncertaintyX2Experiment(BaselineExperiment):
 
             #----------------------------------------------------------------------#
 
-            if significant_change:
-                self.drift_entries.append(self.detection_window_end)
-
+            if entries_without_drift == round(self.dataset.window_size/2,0):
                 # reject null hyp, distributions are NOT the same --> retrain
                 self.reference_window_start = self.detection_window_start
                 self.reference_window_end = self.detection_window_end
@@ -293,6 +301,8 @@ class UncertaintyX2Experiment(BaselineExperiment):
                 # update detection window and reset score
                 self.detection_window_start = self.detection_window_end
                 self.detection_window_end = self.detection_window_end + self.dataset.window_size
+                if self.detection_window_end > len(self.dataset.full_df):
+                    self.detection_window_end = len(self.dataset.full_df)
                 self.experiment_metrics["scores"].append(self.evaluate_model_aggregate())
                 CALC_REF_RESPONSE = True
             else:

@@ -15,7 +15,7 @@ class MarginThresholdExperiment(BaselineExperiment):
         self, model, dataset, k, margin_width, sensitivity, param_grid=None,delete_csv=False
     ):
         super().__init__(model, dataset, param_grid)
-        self.name = f"4_Margin_threshold-S{str(sensitivity).replace('.','_')}"
+        self.name = "4_Margin_threshold"
         self.k = k
         self.margin_width = margin_width
         self.sensitivity = sensitivity
@@ -198,8 +198,6 @@ class MarginThresholdExperiment(BaselineExperiment):
                 - If drift is not-detected, update detection window and repeat
         """
 
-        self.train_model_gscv(window="reference", gscv=True)
-
         # ------------------------Create csv for storing results----------------#
         if self.delete_csv==True:
             cols = ["Exp_name", "Window_size", "Margin_width", "Sensitivity", "Threshold", "Detection_end", "Det_acc",
@@ -210,11 +208,15 @@ class MarginThresholdExperiment(BaselineExperiment):
             entries_df.to_csv(f"./results/{self.dataset.name}_{self.name}_results.csv", index=False)
         # ---------------------------------------------------------------------#
 
+        # train
+        self.train_model_gscv(window="reference", gscv=True)
+
         # initialize score
         self.experiment_metrics["scores"].append(self.evaluate_model_aggregate())
         self.update_detection_window()
 
         CALC_REF_RESPONSE = True
+        entries_without_drift =  self.dataset.window_size # Assigning length of window to start
 
         while self.detection_window_end <= len(self.dataset.full_df):
 
@@ -244,7 +246,19 @@ class MarginThresholdExperiment(BaselineExperiment):
             # compare margin densities to detect drift
             delta_MD = np.absolute(det_MD - ref_MD)
             threshold = self.sensitivity * ref_SD
-            significant_MD_change = True if delta_MD > threshold else False
+
+            if entries_without_drift > round(self.dataset.window_size/2,0):
+                if delta_MD > threshold:
+                    significant_MD_change = True
+                    entries_without_drift = 0
+                    self.drift_entries.append(self.detection_window_end)
+                else:
+                    significant_MD_change = False
+                    entries_without_drift +=1
+            else:
+                significant_MD_change = False
+                entries_without_drift +=1
+
             self.drift_signals.append(significant_MD_change)
 
             # compare accuracies to see if detection was false alarm
@@ -290,8 +304,7 @@ class MarginThresholdExperiment(BaselineExperiment):
 
             #----------------------------------------------------------------------#
 
-            if significant_MD_change:
-                self.drift_entries.append(self.detection_window_end)
+            if entries_without_drift == round(self.dataset.window_size/2,0):
 
                 # reject null hyp, distributions are NOT the same --> retrain
                 self.reference_window_start = self.detection_window_start
@@ -301,6 +314,8 @@ class MarginThresholdExperiment(BaselineExperiment):
                 # update detection window and reset score
                 self.detection_window_start = self.detection_window_end
                 self.detection_window_end = self.detection_window_end + self.dataset.window_size
+                if self.detection_window_end > len(self.dataset.full_df):
+                    self.detection_window_end = len(self.dataset.full_df)
                 self.experiment_metrics["scores"].append(self.evaluate_model_aggregate())
                 CALC_REF_RESPONSE = True
             else:
