@@ -1,16 +1,15 @@
+# Import libraries
+import pandas as pd
 from typing import Dict
 
-import pandas as pd
-
-
+# Define class
 class Dataset:
     def __init__(self, name, full_df: pd.DataFrame, column_mapping: Dict, window_size: int):
-
+        
         self.name = name
         self.full_df = full_df
         self.column_mapping = column_mapping
         self.window_size = window_size
-        #self.set_splits()
     
     def get_data_by_idx(self, start_idx, end_idx, split_labels=True):
         """
@@ -24,7 +23,6 @@ class Dataset:
         Returns:
             features (pd.DataFrame)
             labels (pd.Series)
-
         """
 
         window_data = self.full_df[start_idx:end_idx]
@@ -37,5 +35,5 @@ class Dataset:
 
     @staticmethod
     def split_df(df, label_col):
-        """Splits the features from labels in a dataframe, returns both"""
+        """Splits the features from labels in a dataframe, returns both."""
         return df.drop(label_col, axis=1), df[label_col]
