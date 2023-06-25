@@ -1,5 +1,4 @@
-
-# import libraries
+# Import libraries
 import numpy as np
 import pandas as pd
 from csv import writer
@@ -10,20 +9,23 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import StratifiedKFold
 from test_harness.experiments._1_baseline_experiment import BaselineExperiment
 
-# define class
+# Define class
 class UncertaintyKSExperiment(BaselineExperiment):
     def __init__(self, model, dataset, k, significance_thresh, param_grid=None,delete_csv=False):
+
         super().__init__(model, dataset, param_grid)
         self.name = "2_Response_uncertainty"
         self.k = k
         self.significance_thresh = significance_thresh
+
         self.ref_distributions = []
         self.det_distributions = []
         self.p_vals = []
         self.drift_entries = []
-        self.acc_det_aux = 100 # random number out of range so that first diff is significant
-        self.entry_det_aux = 0 # 0 so that first diff is significant
+        self.acc_det_aux = 100 # random number out of range so that first difference is significant
+        self.entry_det_aux = 0 # 0 so that first difference is significant
         self.delete_csv = delete_csv
+
 
     @staticmethod
     def make_kfold_predictions(X, y, model, dataset, k):
@@ -36,10 +38,11 @@ class UncertaintyKSExperiment(BaselineExperiment):
             X (pd.Dataframe) - features in evaluation window
             y (pd.Series) - labels in evaluation window
             k (int) - number of folds
-            type (str) - specified kfold or LeaveOneOut split methodology
 
         Returns:
-            preds (np.array) - an array of predictions for each X in the input (NOT IN ORDER OF INPUT)
+            tuple composed of:
+            - preds (np.array): an array of predictions for each X in the input (NOT IN ORDER OF INPUT)
+            - split_ACCs (np.array): an array of accuracies for each split
         """
 
         splitter = StratifiedKFold(n_splits=k, random_state=42, shuffle=True)
@@ -49,7 +52,7 @@ class UncertaintyKSExperiment(BaselineExperiment):
 
         for train_indicies, test_indicies in splitter.split(X, y):
 
-            # create column transformer
+            # Create column transformer
             column_transformer = ColumnTransformer(
                 [
                     (
@@ -65,7 +68,7 @@ class UncertaintyKSExperiment(BaselineExperiment):
                 ]
             )
 
-            # instantiate training pipeline
+            # Instantiate training pipeline
             pipe = Pipeline(
                 steps=[
                     ("scaler", column_transformer),
@@ -73,69 +76,64 @@ class UncertaintyKSExperiment(BaselineExperiment):
                 ]
             )
 
-            # fit it
+            # Fit pipeline
             pipe.fit(X.iloc[train_indicies], y.iloc[train_indicies])
 
-            # score it on this Kfold's test data
+            # Score pipeline on this Kfold's test data
             y_preds_split = pipe.predict_proba(X.iloc[test_indicies])
 
-            # get positive class prediction
+            # Get prediction for positive class
             y_preds_split_posclass_proba = y_preds_split[:, 1]
             preds = np.append(preds, y_preds_split_posclass_proba)
 
-            # get accuracy for split
+            # Get accuracy for split
             split_ACC = pipe.score(X.iloc[test_indicies], y.iloc[test_indicies])
             split_ACCs = np.append(split_ACCs, split_ACC)
 
         return preds, split_ACCs
 
-    def get_reference_response_distribution(self):
 
-        # get data in reference window
+    def get_reference_response_distribution(self):
+        """A method to obtain the response distribution of the reference window"""
+
+        # Get data in reference window
         window_start = self.reference_window_start
         window_end = self.reference_window_end
-        
         X_train, y_train = self.dataset.get_data_by_idx(window_start, window_end, split_labels=True)
 
-        # perform kfoldsplits to get predictions
+        # Perform kfoldsplits to get predictions
         preds, split_ACCs = self.make_kfold_predictions(
             X_train, y_train, self.model, self.dataset, self.k
         )
 
+        # Obtain accuracy of reference window as mean of accuracies of the splits; obtain standard deviation
         ref_ACC = np.mean(split_ACCs)
         ref_ACC_SD = np.std(split_ACCs)
 
         return preds, ref_ACC, ref_ACC_SD
 
-    def get_detection_response_distribution(self):
 
-        # get data in prediction window
+    def get_detection_response_distribution(self):
+        """A method to obtain the response distribution of the detection window"""
+
+        # Get data in detection window
         window_start = self.detection_window_start
         window_end = self.detection_window_end
         X_test, y_test = self.dataset.get_data_by_idx(window_start, window_end, split_labels=True)
 
-        # use trained model to get response distribution
-        preds = self.trained_model.predict_proba(X_test)[:, 1] # positive class prediction
+        # Use trained model to get response distribution
+        preds = self.trained_model.predict_proba(X_test)[:, 1] # Prediction for positive class
 
-        # get accuracy for detection window
+        # Get accuracy for detection window
         det_ACC = self.evaluate_model_aggregate(window="detection")[1]
 
         return preds, det_ACC
+
 
     @staticmethod
     def perform_ks_test(dist1, dist2):
         return ks_2samp(dist1, dist2, method='asymp')
 
-    def calculate_errors(self):
-
-        self.false_positives = [
-            True if self.drift_signals[i] and not self.drift_occurences[i] else False
-            for i in range(len(self.drift_signals))
-        ]
-        self.false_negatives = [
-            True if not self.drift_signals[i] and self.drift_occurences[i] else False
-            for i in range(len(self.drift_signals))
-        ]
 
     def run(self):
         """Response Uncertainty Experiment
@@ -152,45 +150,45 @@ class UncertaintyKSExperiment(BaselineExperiment):
                 - If from same distribution, update detection window and repeat
         """
  
-        # ------------------------Create csv for storing results----------------#
+        # ---------------------------------- Create csv for storing results ----------------------------------#
         if self.delete_csv==True:
             cols = ["Exp_name", "Window_size", "Sign_thres", "Detection_end", "Det_acc", "Ref_dist", 
                     "Det_dist", "KS_result", "Drift_signaled", "Real_drift", "Total_Training_time"]
 
             entries_df = pd.DataFrame(columns=cols)
             entries_df.to_csv(f"./results/{self.dataset.name}_{self.name}_results.csv", index=False)
-        # ---------------------------------------------------------------------#
+        # ----------------------------------------------------------------------------------------------------#
 
-        # train
+        # Perform initial training and aggregate evaluation
         self.train_model_gscv(window="reference", gscv=True)
-        
-        # initialize score
         self.experiment_metrics["scores"].append(self.evaluate_model_aggregate())
+
         self.update_detection_window()
 
         CALC_REF_RESPONSE = True
-        entries_without_drift =  self.dataset.window_size # Assigning length of window to start
+        entries_without_drift = self.dataset.window_size # Assigning length of window to start
         
         while self.detection_window_end <= len(self.dataset.full_df):
 
-            # log actual score on detection window
+            # Log incremental accuracy score on detection window
             self.experiment_metrics["scores"].append(self.evaluate_model_incremental())
 
-            # get reference window response distribution with kfold and the detection response distribution
+            # Get response distribution on reference window
             if CALC_REF_RESPONSE:
                 ref_response_dist, ref_ACC, ref_ACC_SD = self.get_reference_response_distribution()
-            
-            det_response_dist, det_ACC = self.get_detection_response_distribution()
-
             self.ref_distributions.append(ref_response_dist)
+
+            # Get response distribution prediction on detection window
+            det_response_dist, det_ACC = self.get_detection_response_distribution()
             self.det_distributions.append(det_response_dist)
 
-            # compare distributions
+            # Compare response distributions
             ks_result = self.perform_ks_test(
                 dist1=ref_response_dist, dist2=det_response_dist
             )
             self.p_vals.append(ks_result.pvalue)
 
+            # If training for previous drift signal has been done and p value is too small, signal drift
             if entries_without_drift > round(self.dataset.window_size/2,0):
                 if ks_result[1] < self.significance_thresh:
                     significant_change = True
@@ -205,12 +203,12 @@ class UncertaintyKSExperiment(BaselineExperiment):
 
             self.drift_signals.append(significant_change)
 
-            # compare accuracies to see if detection was false alarm
-            # i.e. check if change in accuracy is significant
+            # Compare accuracies to see if difference is significant
+            # This part is useful if there is no control over real drift, results will be ignored for this thesis
             delta_ACC = np.absolute(det_ACC - ref_ACC)
             delta_ACC_det = np.absolute(det_ACC - self.acc_det_aux)
             diff_entries = self.detection_window_end - self.entry_det_aux
-            threshold_ACC = 3 * ref_ACC_SD  # considering outside 3 SD significant
+            threshold_ACC = 3 * ref_ACC_SD  # Considering outside 3 SD significant
             if (
                 (self.acc_det_aux==100 or delta_ACC_det > threshold_ACC) # difference vs previous entry
                  and delta_ACC > threshold_ACC                           # difference vs reference
@@ -225,7 +223,8 @@ class UncertaintyKSExperiment(BaselineExperiment):
             self.drift_occurences.append(significant_ACC_change)
 
             
-            # ------------------------Store results------------------------------#
+            # --------------------------------- Store results in csv ----------------------------------#
+            # For the sake of memmory preservation, distributions are only stored if drift has been signaled
             if significant_change:
                 new_entry = [self.name, self.dataset.window_size, self.significance_thresh, 
                             self.detection_window_end, self.acc, ref_response_dist.tolist(),
@@ -237,9 +236,7 @@ class UncertaintyKSExperiment(BaselineExperiment):
                             "", ks_result.pvalue, significant_change,
                             significant_ACC_change, self.total_train_time]
 
-            
             with open(f"./results/{self.dataset.name}_{self.name}_results.csv", 'a', newline='') as f_object:
- 
                 # Pass this file object to csv.writer() and get a writer object
                 writer_object = writer(f_object)
  
@@ -248,15 +245,16 @@ class UncertaintyKSExperiment(BaselineExperiment):
  
                 # Close the file object
                 f_object.close()
-            #----------------------------------------------------------------------#
+            # ------------------------------------------------------------------------------------------#
             
+            # After drift signal, wait for a period of window_size/2 entries and then train
             if entries_without_drift == round(self.dataset.window_size/2,0):
-                # reject null hyp, distributions are NOT the same --> retrain
+                # Update reference window to detection window, then train
                 self.reference_window_start = self.detection_window_start
                 self.reference_window_end = self.detection_window_end
                 self.train_model_gscv(window="reference", gscv=True)
 
-                # update detection window and reset score
+                # Update detection window and reset accuracy score
                 self.detection_window_start = self.detection_window_end
                 self.detection_window_end = self.detection_window_end + self.dataset.window_size
                 if self.detection_window_end > len(self.dataset.full_df):
@@ -271,4 +269,3 @@ class UncertaintyKSExperiment(BaselineExperiment):
 
         self.calculate_label_expense()
         self.calculate_train_expense()
-        self.calculate_errors()

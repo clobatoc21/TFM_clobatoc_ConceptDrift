@@ -1,5 +1,4 @@
-
-# import libraries
+# Import libraries
 import pandas as pd
 from csv import writer
 import time
@@ -11,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GridSearchCV
 from test_harness.experiments.base_class_experiment import Experiment
 
-# define class
+# Define class
 class BaselineExperiment(Experiment):
     def __init__(self, model, dataset, param_grid=None,delete_csv=False):
 
@@ -53,7 +52,7 @@ class BaselineExperiment(Experiment):
 
         self.training_times+=1 # increase by 1 every time the model is trained
         
-        # gather training data
+        # Gather training data
         window_start = (
             self.reference_window_start
             if window == "reference"
@@ -69,7 +68,7 @@ class BaselineExperiment(Experiment):
         X_train, y_train = self.dataset.get_data_by_idx(window_start, window_end, split_labels=True)
         self.last_training = window_end
         
-        # create column transformer
+        # Create column transformer
         column_transformer = ColumnTransformer(
             [
                 (
@@ -86,7 +85,7 @@ class BaselineExperiment(Experiment):
         )
         
 
-        # instantiate training pipeline
+        # Instantiate training pipeline
         pipe = Pipeline(
             steps=[
                 ("transformer", column_transformer),
@@ -94,8 +93,7 @@ class BaselineExperiment(Experiment):
             ]
         )
 
-        # to help ensure there is no overfit, perform GridsearchCV eachtime a new model is 
-        # fit on the reference window
+        # To help ensure there is no overfit, perform GridsearchCV eachtime a new model is fit on a window
         if gscv:
             if self.param_grid is None:
                 raise AttributeError("Training with GSCV, but no param_grid provided.")
@@ -117,22 +115,22 @@ class BaselineExperiment(Experiment):
             eval_score = gs.cv_results_["mean_train_score"][gs.best_index_]
             gscv_test_score = gs.best_score_
 
-            # update self.model to hold best params
+            # Update self.model to hold best parameters
             self.model = self.trained_model.get_params()["clf"]
 
         else:
 
-            # fit model
+            # Fit model
             start_time = time.time()
             self.trained_model = pipe.fit(X_train, y_train)
             end_time = time.time()
             train_time = end_time - start_time
 
-            # evaluate training
+            # Evaluate training
             eval_score = self.evaluate_model_aggregate(window=window)
             gscv_test_score = None
 
-        # save metrics
+        # Save training metrics
         metrics = {
             "times_trained": self.training_times,
             "training_spot": self.last_training,
@@ -157,7 +155,7 @@ class BaselineExperiment(Experiment):
             - acc_new (float): aggregate score on selected window
         """
 
-        # gather evaluation data and evaluate
+        # Gather evaluation data
         window_start = (
             self.reference_window_start
             if window == "reference"
@@ -172,6 +170,7 @@ class BaselineExperiment(Experiment):
 
         X_test, y_test = self.dataset.get_data_by_idx(window_start, window_end, split_labels=True)
 
+        # Evaluate and update accuracy score
         acc_new = self.trained_model.score(X_test, y_test)
 
         self.acc = acc_new
@@ -181,7 +180,7 @@ class BaselineExperiment(Experiment):
 
     def evaluate_model_incremental(self, window="detection"):
         """
-        Evaluates the saved model in an incremental manner by updating the score based on the last
+        Evaluates the saved model in an incremental way by updating the acc score based on the latest
         entry in the specified window.
 
         Args:
@@ -193,7 +192,7 @@ class BaselineExperiment(Experiment):
             - acc_new (float): incremental score on selected window
         """
 
-        # gather evaluation data and evaluate
+        # Gather evaluation data
         window_start = (
             self.reference_window_start
             if window == "reference"
@@ -206,18 +205,19 @@ class BaselineExperiment(Experiment):
             else self.detection_window_end
         )
 
-        # score for last entry in the window
+        # Obtain score for last entry in the window
         idx_end = window_end-1
         X_new, y_new = self.dataset.get_data_by_idx(idx_end, window_end, split_labels=True)
         y_pred_new = self.trained_model.predict(X_new)
         acc_new = round(1/self.dataset.window_size,4) if int(y_pred_new)==int(y_new) else 0
 
-        # score from first entry in previous score
+        # Obtain score from first entry in previous window
         idx_st = window_start-1
         X_remove, y_remove = self.dataset.get_data_by_idx(idx_st, window_start, split_labels=True)
         y_pred_remove = self.trained_model.predict(X_remove)
         acc_remove = round(1/self.dataset.window_size,4) if int(y_pred_remove)==int(y_remove) else 0
 
+        # Calculate new accuracy and update accuracy score
         acc_new = self.acc - acc_remove + acc_new
         self.acc = acc_new
 
@@ -261,16 +261,11 @@ class BaselineExperiment(Experiment):
         self.experiment_metrics["total_train_time"] = total_train_time
 
 
-    def calculate_errors(self):
-
-        self.false_positives = []
-        self.false_negatives = []
-
     def run(self):
         """Baseline Experiment
          
         This experiment trains a model on the initial reference window and then evaluates
-        incrementally on each detection window with no retraining. It produces the least
+        incrementally on each new entry with no retraining. It produces the least
         accurate scenario and should incur minimal label cost at the expense of accuracy.
 
         Logic flow:
@@ -281,32 +276,32 @@ class BaselineExperiment(Experiment):
             - Repeat steps 3 and 4 until finished
         """
 
-        self.train_model_gscv(window="reference", gscv=True)
-
-        # ------------------------Store results------------------------------#
+        # ---------------------------------- Create csv for storing results ----------------------------------#
         if self.delete_csv==True:
             cols = ["Exp_name", "Window_size", "Detection_end", "Det_acc", 
                     "Drift_signaled", "Real_drift", "Total_Training_time"]
 
             entries_df = pd.DataFrame(columns=cols)
             entries_df.to_csv(f"./results/{self.dataset.name}_{self.name}_results.csv", index=False)
-        # ---------------------------------------------------------------------#
+        # ----------------------------------------------------------------------------------------------------#
 
+        # Perform initial training and aggregate evaluation
+        self.train_model_gscv(window="reference", gscv=True)
         self.experiment_metrics["scores"].append(self.evaluate_model_aggregate())
+
         self.update_detection_window()
 
         while self.detection_window_end <= len(self.dataset.full_df):
 
+            # Log incremental accuracy score on detection window
             self.experiment_metrics["scores"].append(self.evaluate_model_incremental())
 
-            # ------------------------Delete if error------------------------------#
-
+            # --------------------------------- Store results in csv ----------------------------------#
             new_entry = [self.name, self.dataset.window_size, 
                          self.detection_window_end, self.acc, 
                          "False", "False", self.total_train_time]
             
             with open(f"./results/{self.dataset.name}_{self.name}_results.csv", 'a', newline='') as f_object:
- 
                 # Pass this file object to csv.writer() and get a writer object
                 writer_object = writer(f_object)
  
@@ -315,12 +310,10 @@ class BaselineExperiment(Experiment):
  
                 # Close the file object
                 f_object.close()
-
-            #----------------------------------------------------------------------#
+            #-----------------------------------------------------------------------------------------#
 
             #self.update_reference_window() # commented because it is useless for Baseline
             self.update_detection_window()
 
         self.calculate_label_expense()
         self.calculate_train_expense()
-        self.calculate_errors()

@@ -1,16 +1,19 @@
+# Import libraries
 from abc import ABC, abstractmethod
 
+# Define class
 class Experiment(ABC):
-    """Abstract base class to serve as template for other experiments.
+    """
+    Abstract base class to serve as template for other experiments.
 
     In addition to the abstract methods specified below, each Experiment subclass should maintain
     the following attributes at a minimum:
-        experiment_metrics (defaultdict) - collection of experiment metrics including
-            including keys for the following items:
-                - 'training': List[Dict] where each dict saves details of training job
-                - 'scores': List[Tuple] where each tuple is index and evaluation score
-                - 'label_expense': Dict with number of labels requested and percent of total
-                - 'total_train_time': float aggregate amount of training time
+        experiment_metrics (defaultdict) - collection of experiment metrics, 
+        including keys for the following items:
+            - 'training': List[Dict] where each dict saves details of training job
+            - 'scores': List[Tuple] where each tuple is index and evaluation score
+            - 'label_expense': Dict with number of labels requested and percent of total
+            - 'total_train_time': float aggregate amount of training time
     """
 
     @abstractmethod
